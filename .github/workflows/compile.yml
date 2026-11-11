@@ -1,0 +1,77 @@
+name: Build LOLZ Kernel Android 13
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+
+      - name: Set Up Environment Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libncurses5-dev libncursesw5-dev zip curl python3 ccache
+
+      - name: Download Toolchains
+        run: |
+          mkdir -p $HOME/toolchains
+          cd $HOME/toolchains
+          # Menggunakan Proton Clang 13/14 yang sangat cocok untuk Kernel 4.9 Android 13
+          git clone https://github.com/kdrag0n/proton-clang.git --depth=1 clang
+          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git --depth=1 gcc64
+          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git --depth=1 gcc32
+
+      - name: Compile Kernel
+        run: |
+          export PATH="$HOME/toolchains/clang/bin:$HOME/toolchains/gcc64/bin:$HOME/toolchains/gcc32/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          
+          # Buat folder output
+          mkdir -p out
+          
+          # Load Config (Secara default olive-perf_defconfig)
+          make O=out olive-perf_defconfig
+          
+          # Opsi tambahan jika ingin menonaktifkan error LLVM/Clang yang ketat
+          make -j$(nproc --all) O=out \
+              CC=clang \
+              CROSS_COMPILE=aarch64-linux-android- \
+              CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+              CLANG_TRIPLE=aarch64-linux-gnu- \
+              CONFIG_DEBUG_SECTION_MISMATCH=y \
+              WERROR=0
+
+      - name: Check Kernel Image Output
+        run: |
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "KERNEL_IMAGE=Image.gz-dtb" >> $GITHUB_ENV
+          elif [ -f out/arch/arm64/boot/Image.gz ]; then
+              echo "KERNEL_IMAGE=Image.gz" >> $GITHUB_ENV
+          else
+              echo "Kernel build failed!"
+              exit 1
+          fi
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git ~/AnyKernel3
+          cp out/arch/arm64/boot/${{ env.KERNEL_IMAGE }} ~/AnyKernel3/
+          cd ~/AnyKernel3
+          
+          # Konfigurasi AnyKernel3 untuk Redmi 8 / 8A / 8A Dual
+          sed -i 's/device.name1=.*/device.name1=olivewood/' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=olive/' anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=olivelite/' anykernel.sh
+          sed -i 's/device.name4=.*/device.name4=pine/' anykernel.sh
+          
+          zip -r9 LOLZ-Kernel-A13-olivewood.zip * -x .git README.md *placeholder
+
+      - name: Upload Flashable Kernel ZIP
+        uses: actions/upload-artifact@v3
+        with:
+          name: LOLZ-Kernel-Android13-olivewood
+          path: ~/AnyKernel3/LOLZ-Kernel-A13-olivewood.zip
